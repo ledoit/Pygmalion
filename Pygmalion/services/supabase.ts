@@ -74,3 +74,37 @@ export const getProductCards = async (): Promise<ProductCard[]> => {
     return [];
   }
 };
+
+// Save classification corrections for model improvement
+export const saveClassificationCorrection = async (
+  sketchId: string,
+  originalCategory: string,
+  correctedCategory: string,
+  imageUri: string,
+  ocrText?: string
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('classification_corrections')
+      .insert([
+        {
+          sketch_id: sketchId,
+          original_category: originalCategory,
+          corrected_category: correctedCategory,
+          image_uri: imageUri,
+          ocr_text: ocrText,
+          corrected_at: new Date().toISOString()
+        }
+      ]);
+
+    if (error) {
+      console.error('Error saving classification correction:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error saving classification correction:', error);
+    return false;
+  }
+};
