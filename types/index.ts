@@ -1,3 +1,5 @@
+import { ClassificationResult } from '../services/classifier';
+
 export interface Sketch {
   id: string;
   imageUri: string;
@@ -9,6 +11,7 @@ export interface Sketch {
   };
   ocrText?: string;
   category?: string;
+  classification?: ClassificationResult;
 }
 
 export interface RenderedVariation {

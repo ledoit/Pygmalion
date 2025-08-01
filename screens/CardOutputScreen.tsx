@@ -10,12 +10,14 @@ import {
   Dimensions,
   Alert,
   TextInput,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RenderedVariation, Sketch, ProductCard } from '../types';
 import { generateCardContentWithGPT } from '../services/aiService';
 import { saveProductCard } from '../services/supabase';
+import { CATEGORIES, Category, saveClassificationCorrection } from '../services/classifier';
 
 interface CardOutputScreenProps {
   navigation: any;
@@ -42,10 +44,55 @@ export default function CardOutputScreen({ navigation, route }: CardOutputScreen
   const [cardContents, setCardContents] = useState<Map<string, CardContent>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedCards, setSavedCards] = useState<Set<string>>(new Set());
+  
+  // Category selection state
+  const [selectedCategories, setSelectedCategories] = useState<Map<string, Category>>(new Map());
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [currentSketchId, setCurrentSketchId] = useState<string>('');
 
   useEffect(() => {
     generateAllCardContents();
+    initializeCategories();
   }, []);
+
+  const initializeCategories = () => {
+    const initialCategories = new Map<string, Category>();
+    sketches.forEach(sketch => {
+      if (sketch.classification?.category) {
+        initialCategories.set(sketch.id, sketch.classification.category);
+      }
+    });
+    setSelectedCategories(initialCategories);
+  };
+
+  const openCategoryModal = (sketchId: string) => {
+    setCurrentSketchId(sketchId);
+    setCategoryModalVisible(true);
+  };
+
+  const selectCategory = async (category: Category) => {
+    const sketch = sketches.find(s => s.id === currentSketchId);
+    if (!sketch) return;
+
+    const originalCategory = sketch.classification?.category;
+    
+    // Update the selected category
+    setSelectedCategories(prev => new Map(prev.set(currentSketchId, category)));
+    
+    // Save correction if user changed the category
+    if (originalCategory && originalCategory !== category) {
+      await saveClassificationCorrection(
+        currentSketchId,
+        originalCategory,
+        category,
+        sketch.imageUri,
+        sketch.ocrText
+      );
+    }
+    
+    setCategoryModalVisible(false);
+    setCurrentSketchId('');
+  };
 
   const generateAllCardContents = async () => {
     const newContents = new Map<string, CardContent>();
@@ -123,13 +170,15 @@ export default function CardOutputScreen({ navigation, route }: CardOutputScreen
     try {
       setIsSaving(true);
       
+      const selectedCategory = selectedCategories.get(sketch.id) || sketch.classification?.category || 'decorations';
+      
       const cardData = {
         sketchId: variation.sketchId,
         renderedVariationId: variation.id,
         imageUri: variation.imageUri,
         title: content.title,
         tagline: content.tagline,
-        category: sketch.category || 'general',
+        category: selectedCategory,
       };
 
       const savedCard = await saveProductCard(cardData);
@@ -171,7 +220,7 @@ export default function CardOutputScreen({ navigation, route }: CardOutputScreen
           imageUri: variation.imageUri,
           title: content.title,
           tagline: content.tagline,
-          category: sketch.category || 'general',
+          category: selectedCategories.get(sketch.id) || sketch.classification?.category || 'decorations',
         };
 
         const savedCard = await saveProductCard(cardData);
@@ -261,10 +310,34 @@ export default function CardOutputScreen({ navigation, route }: CardOutputScreen
                 <Text style={styles.metaLabel}>Style:</Text>
                 <Text style={styles.metaValue}>{variation.style}</Text>
               </View>
+              
+              {/* Category with prediction info */}
               <View style={styles.metaItem}>
                 <Text style={styles.metaLabel}>Category:</Text>
-                <Text style={styles.metaValue}>{sketch?.category || 'general'}</Text>
+                <TouchableOpacity 
+                  style={styles.categorySelector}
+                  onPress={() => openCategoryModal(sketch?.id || '')}
+                >
+                  <Text style={styles.categoryValue}>
+                    {selectedCategories.get(sketch?.id || '') || sketch?.classification?.category || 'decorations'}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color="#007AFF" />
+                </TouchableOpacity>
               </View>
+              
+              {/* Show classification confidence if available */}
+              {sketch?.classification && (
+                <View style={styles.metaItem}>
+                  <Text style={styles.metaLabel}>AI Confidence:</Text>
+                  <Text style={[
+                    styles.metaValue,
+                    { color: sketch.classification.confidence > 0.8 ? '#28a745' : 
+                             sketch.classification.confidence > 0.6 ? '#ffc107' : '#dc3545' }
+                  ]}>
+                    {Math.round(sketch.classification.confidence * 100)}%
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
 
@@ -342,6 +415,41 @@ export default function CardOutputScreen({ navigation, route }: CardOutputScreen
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Category Selection Modal */}
+      <Modal
+        visible={categoryModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setCategoryModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Category</Text>
+              <TouchableOpacity
+                onPress={() => setCategoryModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.categoriesList}>
+              {CATEGORIES.map((category) => (
+                <TouchableOpacity
+                  key={category}
+                  style={styles.categoryOption}
+                  onPress={() => selectCategory(category)}
+                >
+                  <Text style={styles.categoryOptionText}>{category}</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#007AFF" />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -480,6 +588,21 @@ const styles = StyleSheet.create({
     color: '#666',
     textTransform: 'capitalize',
   },
+  categorySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+  },
+  categoryValue: {
+    fontSize: 14,
+    color: '#333',
+    marginRight: 8,
+  },
   cardActions: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -507,5 +630,54 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 40,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    width: '80%',
+    maxHeight: '70%',
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+  },
+  modalCloseButton: {
+    padding: 8,
+  },
+  categoriesList: {
+    maxHeight: 300,
+  },
+  categoryOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f3f5',
+  },
+  categoryOptionText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '500',
   },
 });

@@ -1,4 +1,5 @@
 import { Sketch, RenderedVariation, AIServiceResponse } from '../types';
+import { classifySketch } from './classifier';
 
 // Mock implementations - replace with actual API calls
 // In production, these would connect to your AI service endpoints
@@ -24,8 +25,32 @@ export const processImageWithSegmentAnything = async (imageUri: string): Promise
       category: 'furniture'
     }
   ];
+
+  // Process each sketch: extract OCR text and classify
+  const processedSketches: Sketch[] = [];
   
-  return mockSketches;
+  for (const sketch of mockSketches) {
+    try {
+      // Extract text with OCR (in production, this would be called during segmentation)
+      const ocrText = await extractTextWithOCR(sketch.imageUri);
+      
+      // Classify the sketch using GPT-4o mini
+      const classification = await classifySketch(sketch.imageUri, ocrText);
+      
+      processedSketches.push({
+        ...sketch,
+        ocrText,
+        category: classification.category, // Set category from classification
+        classification // Store full classification result
+      });
+    } catch (error) {
+      console.error('Error processing sketch:', sketch.id, error);
+      // Add sketch without classification on error
+      processedSketches.push(sketch);
+    }
+  }
+  
+  return processedSketches;
 };
 
 export const extractTextWithOCR = async (imageUri: string): Promise<string> => {
